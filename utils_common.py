@@ -52,8 +52,9 @@ def show3Dpose(channels, ax, radius=40, lcolor='#ff0000', rcolor='#0000ff', mask
     if use_joint12:
         connections = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11]]
     else:
-        connections = [[0, 1], [0, 2], [0, 3], [1, 4], [2, 5], [3, 6], [4, 7], [5, 8], [6, 9], [7, 10], [8, 11], [9, 12], [9, 13], [9, 14],
-                    [12, 15], [13, 16], [14, 17], [16, 18], [17, 19], [18, 20], [19, 21], [20, 22], [21, 23]]
+        connections = [
+            (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12), (12, 13), (11, 14), (14, 15), (15, 16), (16, 17), (11, 18), (18, 19), (19, 20), (20, 21)
+        ]
 
     # LR = np.array([0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0], dtype=bool)
     LR = np.array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1], dtype=bool)
@@ -282,7 +283,7 @@ def show3Dpose_animation(channels, image_directory, iterations, tag, bs_idx, use
         os.makedirs(dest_folder)
 
     if dest_vis_path is None:
-        dest_gif_path = os.path.join(dest_folder, str(bs_idx)+".mp4")      
+        dest_gif_path = os.path.join(dest_folder, str(bs_idx)+".gif")      
     else:
         dest_gif_path = dest_vis_path 
 

@@ -9,12 +9,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from lib.utils.eval_utils import (
-    compute_accel,
-    compute_error_accel,
-    compute_error_verts,
-    batch_compute_similarity_transform_torch,
-)
+#from lib.utils.eval_utils import (
+#    compute_accel,
+#    compute_error_accel,
+#    compute_error_verts,
+#    batch_compute_similarity_transform_torch,
+#)
 
 from torch.optim import lr_scheduler
 

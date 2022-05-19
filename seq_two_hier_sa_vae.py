@@ -1,3 +1,4 @@
+from configparser import Interpolation
 import copy
 import numpy as np
 import json 
@@ -16,6 +17,8 @@ import torchgeometry as tgm
 
 import my_tools
 from fk_layer import ForwardKinematicsLayer
+from fk_layer_lafan import *
+from pytorch3d.transforms import *
 from skeleton import SkeletonUnpool, SkeletonPool, SkeletonConv, find_neighbor, SkeletonLinear, get_edges
 
 from torch.distributions import Categorical
@@ -143,11 +146,13 @@ class Encoder(nn.Module):
         # train_hier_level: 1, 2, 3, 4 (deep to shallow)
         z_vector_list = []
         for i, layer in enumerate(self.layers):
-            # print("i:{0}".format(i))
-            # print("layer:{0}".format(layer))
-            # print("layer input:{0}".format(input.size()))
+            #print("i:{0}".format(i))
+            #print("layer:{0}".format(layer))
+            #print("layer input:{0}".format(input.size()))
             input = layer(input)
-            # print("layer output:{0}".format(input.size()))
+            #except:
+            #    print("CHECK ", layer[0].weight.shape, input.shape)
+            #print("layer output:{0}".format(input.size()))
          
             # latent: bs X (k_edges*d) X (T//2^n_layers)
             bs, _, compressed_t = input.size()
@@ -158,9 +163,9 @@ class Encoder(nn.Module):
             
             encoder_map_input = input.view(bs, k_edges, -1)
             # print("encoder_map_input:{0}".format(encoder_map_input.size()))
-
+            
             curr_z_vector = self.latent_enc_layers[i](encoder_map_input)
-            # print("curr_z_vector:{0}".format(curr_z_vector.size()))
+            #print("curr_z_vector:{0}".format(curr_z_vector.size()))
             z_vector_list.append(curr_z_vector)
            
         return input, z_vector_list 
@@ -304,10 +309,12 @@ class TwoHierSAVAEModel(nn.Module):
         self.output_dim = hp['output_dim']
         self.max_timesteps = hp['train_seq_len']
 
-        parent_json = "./utils/data/joint24_parents.json"
+        parent_json = "./utils/data/lafan_joint22_parents.json"
         edges = get_edges(parent_json) # a list with 23(n_joints-1) elements, each elements represents a pair (parent_idx, idx)
-
-        self.fk_layer = ForwardKinematicsLayer()
+        
+        self.skeleton = Skeleton(offsets = sk_offsets,
+                                 parents = sk_parents)
+        self.skeleton.remove_joints(sk_joints_to_remove)   
 
         self.hp = hp 
 
@@ -332,24 +339,27 @@ class TwoHierSAVAEModel(nn.Module):
 
         return level
 
-    def forward(self, data, hp, iterations, multigpus=False, validation_flag=False):
+    def forward(self, data, hp, iterations, multigpus=False, validation_flag=False, interpolation=False):
         offset = None 
-        # input = torch.zeros(8, 24*6, 30).cuda() # For debug
+        # input = torch.zeros(8, 22*6, 30).cuda() # For debug
         seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v = data
         seq_rot_6d = seq_rot_6d.float().cuda() # bs X T X (24*6), not normalized
         seq_rot_mat = seq_rot_mat.float().cuda() # bs X T X (24*3*3), not normalized
-        # seq_rot_pos = seq_rot_pos.float().cuda() # bs X T X (24*3), not normalized
+        seq_rot_pos = seq_rot_pos.float().cuda() # bs X T X (24*3), not normalized
         bs, timesteps, _ = seq_rot_6d.size()
-        seq_rot_pos = self.fk_layer(seq_rot_mat.view(bs*timesteps, self.n_joints, 3, 3)).detach() # (bs*T) X 24 X 3
-        seq_rot_pos = seq_rot_pos.view(bs, timesteps, self.n_joints, 3) # bs X T X 24 X 3
-        seq_rot_pos = seq_rot_pos.contiguous().view(bs, timesteps, -1) # bs X T X (24*3)
+        #seq_rot_pos = self.fk_layer(seq_rot_mat.view(bs*timesteps, self.n_joints, 3, 3)).detach() # (bs*T) X 24 X 3
+        #seq_rot_pos = seq_rot_pos.view(bs, timesteps, self.n_joints, 3) # bs X T X 24 X 3
+        #seq_rot_pos = seq_rot_pos.contiguous().view(bs, timesteps, -1) # bs X T X (24*3)
         seq_root_v = seq_root_v.float().cuda() # bs X T X 3, normalized
-
-        encoder_input = seq_rot_6d.view(bs, timesteps, self.n_joints, -1) # bs X T X 24 X 6
+        
+        encoder_input = seq_rot_6d.view(bs, timesteps, 22 , -1) # bs X T X 24 X 6
        
         input = encoder_input.view(bs, timesteps, -1) # bs X T X (24*9)
         input = input.transpose(1, 2) # bs X (24*9) X T
-       
+        
+        if interpolation:
+            input[:,:,10:-1] = 0.
+        
         latent, z_vec_list = self.enc(input, offset) # input: bs X (n_edges*input_dim) X T
         # latent: bs X (k_edges*d) X (T//2^n_layers)
         # list, each is bs X k_edges X (2*latent_d)
@@ -390,7 +400,7 @@ class TwoHierSAVAEModel(nn.Module):
 
             l_kl_list.append(l_kl_curr) # From shallow to deep layers
 
-        out_cont6d, out_rotation_matrix, out_pose_pos, root_v_out, _, _, _ = self._decode(z_list)
+        out_cont6d, out_rotation_matrix, out_pose_pos, root_v_out, _, _, _ = self._decode(z_list, seq_rot_pos)
 
         l_rec_6d = self.l2_criterion(out_cont6d.contiguous().view(bs, self.max_timesteps, -1), seq_rot_6d)
         l_rec_rot_mat = self.l2_criterion(out_rotation_matrix.view(bs, self.max_timesteps, -1), seq_rot_mat)
@@ -410,11 +420,68 @@ class TwoHierSAVAEModel(nn.Module):
         l_total = hp['rec_6d_w'] * l_rec_6d + hp['rec_rot_w'] * l_rec_rot_mat + hp['rec_pose_w'] * l_rec_pose +  hp['kl_w'] * l_kl_list[3] + \
             hp['shallow_kl_w'] * l_kl_list[0]
         
+        l_total.requires_grad_(True)
         if not validation_flag:
             l_total.backward()
 
         return l_total, l_kl, l_rec_6d, l_rec_rot_mat, l_rec_pose, l_rec_joint_pos, l_rec_root_v, \
         l_rec_linear_v, l_rec_angular_v, l_kl_list
+    
+    def interpolate(self, data, window_size = 40):
+        offset = None 
+        # input = torch.zeros(8, 22*6, 30).cuda() # For debug
+        seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v = data
+        seq_rot_6d = seq_rot_6d.float().cuda() # bs X T X (24*6), not normalized
+        seq_rot_mat = seq_rot_mat.float().cuda() # bs X T X (24*3*3), not normalized
+        seq_rot_pos = seq_rot_pos.float().cuda() # bs X T X (24*3), not normalized
+        bs, timesteps, _ = seq_rot_6d.size()
+        #seq_rot_pos = self.fk_layer(seq_rot_mat.view(bs*timesteps, self.n_joints, 3, 3)).detach() # (bs*T) X 24 X 3
+        #seq_rot_pos = seq_rot_pos.view(bs, timesteps, self.n_joints, 3) # bs X T X 24 X 3
+        #seq_rot_pos = seq_rot_pos.contiguous().view(bs, timesteps, -1) # bs X T X (24*3)
+        seq_root_v = seq_root_v.float().cuda() # bs X T X 3, normalized
+        
+        encoder_input = seq_rot_6d.view(bs, timesteps, 22 , -1) # bs X T X 24 X 6
+       
+        input = encoder_input.view(bs, timesteps, -1) # bs X T X (24*9)
+        input = input.transpose(1, 2) # bs X (24*9) X T
+        
+        input[:,:,10:10+window_size] = 0.
+        input[:,:,10+window_size+1:] = 0.
+        
+        latent, z_vec_list = self.enc(input, offset) # input: bs X (n_edges*input_dim) X T
+        # latent: bs X (k_edges*d) X (T//2^n_layers)
+        # list, each is bs X k_edges X (2*latent_d)
+       
+        z_list = []
+        l_kl_list = []
+        for z_idx in range(len(z_vec_list)):
+            distributions = z_vec_list[z_idx] # bs X k_edges X (2*latent_d)
+            bs, k_edges, _ = distributions.size()
+            if z_idx == 0:
+                mu = distributions[:, :, :self.shallow_latent_d].view(-1, self.shallow_latent_d) # (bs*k_edges) X latent_d
+                logvar = distributions[:, :, self.shallow_latent_d:].view(-1, self.shallow_latent_d) # (bs*k_edges) X latent_d
+            else:
+                mu = distributions[:, :, :self.latent_d].view(-1, self.latent_d) # (bs*k_edges) X latent_d
+                logvar = distributions[:, :, self.latent_d:].view(-1, self.latent_d) # (bs*k_edges) X latent_d
+
+            z = self.reparametrize(mu, logvar) # (bs*7) X latent_d
+
+            z = z.view(bs, k_edges, -1) # bs X 7 X latent_d
+   
+            if z_idx == len(z_vec_list)-1: # The final deepest layer level
+                l_kl_curr = self.kl_loss(logvar, mu)
+            elif z_idx == 0:
+                l_kl_curr = self.kl_loss(logvar, mu)
+            else:
+                l_kl_curr = torch.zeros(1).cuda()
+
+            z_list.append(z)
+
+            l_kl_list.append(l_kl_curr) # From shallow to deep layers
+
+        pos,quat = self._decode(z_list, seq_rot_pos, lafan=True)
+
+        return pos[:,:10+window_size+1], quat[:,:10+window_size+1]
 
     def reparametrize(self, pred_mean, pred_logvar):
         random_z = torch.randn_like(pred_mean)
@@ -433,7 +500,7 @@ class TwoHierSAVAEModel(nn.Module):
 
         return loss.mean()
 
-    def _decode(self, z_list, adjust_root_rot_flag=False, relative_root_rot=None):
+    def _decode(self, z_list, seq_rot_pos, adjust_root_rot_flag=False, relative_root_rot=None, lafan=False):
         # list of z: bs X 7 X latent_d
         result = self.dec(z_list) # bs X (24*out_dim) X T
         bs = result.size()[0]
@@ -457,18 +524,28 @@ class TwoHierSAVAEModel(nn.Module):
         if adjust_root_rot_flag: # Only used in testing for Visualization! 
             if relative_root_rot is not None:
                 # relative_root_rot: bs X T X 3 X 3
-                out_rotation_matrix = out_rotation_matrix.view(bs, self.max_timesteps, 24, 3, 3)
+                out_rotation_matrix = out_rotation_matrix.view(bs, self.max_timesteps, 22, 3, 3)
                 out_rotation_matrix[:, :, 0, :, :] = torch.matmul(relative_root_rot, out_rotation_matrix[:, :, 0, :, :])
             else:
                 out_rotation_matrix, relative_root_rot = self.adjust_root_rot(out_rotation_matrix.view(bs, self.max_timesteps, 24, 3, 3)) # bs X T X 24 X 3 X 3, bs X T X 3 X 3
           
-            out_rotation_matrix = out_rotation_matrix.view(bs*self.max_timesteps, 24, 3, 3)
+            out_rotation_matrix = out_rotation_matrix.view(bs*self.max_timesteps, 22, 3, 3) # [B*T x 3 x 3]
 
         # Convert 6d representation to pose
-        out_pose_pos = self.fk_layer(out_rotation_matrix) # (bs*T) X 24 X 3
+        mat_to_quat = matrix_to_quaternion(out_rotation_matrix).view(bs,-1,22,4) # [B*T x 22 x 4]
+        
+        if lafan:
+            pos,quat = self.skeleton.forward_kinematics_with_rotation(
+                                    rotations = mat_to_quat.double().cuda(),
+                                    root_positions = seq_rot_pos[:,:,:3].cuda())  # [B,T,66]
+            return pos, quat
+        else:
+            out_pose_pos = self.skeleton.forward_kinematics(
+                                  rotations = mat_to_quat.double().cuda(),
+                                  root_positions = seq_rot_pos[:,:,:3].cuda())
 
-        out_cont6d = cont6d_rep.view(bs, self.max_timesteps, self.n_joints, -1) # bs X T X 24 X 6
-        out_rotation_matrix = out_rotation_matrix.view(bs, self.max_timesteps, self.n_joints, 3, 3) # bs X T X 24 X 3 X 3
+        out_cont6d = cont6d_rep.view(bs, self.max_timesteps, self.n_joints, -1) # bs X T X 22 X 6
+        out_rotation_matrix = out_rotation_matrix.view(bs, self.max_timesteps, self.n_joints, 3, 3) # bs X T X 22 X 3 X 3
         out_pose_pos = out_pose_pos.view(bs, self.max_timesteps, self.n_joints, 3) # bs X T X 24 X 3
 
         return out_cont6d, out_rotation_matrix, out_pose_pos, root_v_out, joint_pos_out, linear_v_out, angular_v_out
@@ -557,7 +634,7 @@ class TwoHierSAVAEModel(nn.Module):
 
         return converted_root_v.squeeze(-1)
 
-    def test(self, data, hp, iterations, gen_seq_len=None):
+    def test(self, data, hp, iterations, gen_seq_len=None, interpolation=False):
         self.eval()
         self.enc.eval()
         self.dec.eval()
@@ -567,6 +644,7 @@ class TwoHierSAVAEModel(nn.Module):
             seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v = data
             seq_rot_6d = seq_rot_6d.float().cuda() # bs X T X (24*6), not normalized
             seq_rot_mat = seq_rot_mat.float().cuda() # bs X T X (24*3*3), not normalized
+            seq_rot_pos_ori = seq_rot_pos.clone()
             # seq_rot_pos = seq_rot_pos.float().cuda() # bs X T X (24*3), not normalized
             bs, timesteps, _ = seq_rot_6d.size()
             seq_root_v = seq_root_v.float().cuda() # bs X T X 3, not normalized
@@ -574,22 +652,33 @@ class TwoHierSAVAEModel(nn.Module):
             # Convert rot mat to a visualization used global rotation
             if hp['random_root_rot_flag']:
                 seq_rot_mat, relative_rot = self.adjust_root_rot(seq_rot_mat.view(bs, timesteps, 24, 3, 3)) # bs X T X 24 X 3 X 3, bs X T X 3 X 3
-            seq_rot_pos = self.fk_layer(seq_rot_mat.view(bs*timesteps, self.n_joints, 3, 3)).detach() # (bs*T) X 24 X 3
+
+            mat_to_quat = matrix_to_quaternion(seq_rot_mat.view(bs*timesteps, self.n_joints, 3, 3)).view(bs,-1,22,4) # [B*T x 22 x 4]
+            seq_rot_pos = self.skeleton.forward_kinematics(
+                                  rotations = mat_to_quat.double().cuda(),
+                                  root_positions = seq_rot_pos[:,:,:3].cuda())
+
             seq_rot_pos = seq_rot_pos.view(bs, timesteps, self.n_joints, 3) # bs X T X 24 X 3
             seq_rot_pos = seq_rot_pos.contiguous().view(bs, timesteps, -1) # bs X T X (24*3)
             # seq_rot_pos = seq_rot_pos.float().cuda() # bs X T X (24*3), not normalized
             seq_root_v = seq_root_v.float().cuda() # bs X T X 3, not normalized
             # seq_root_v_for_vis = self.apply_root_rot_to_translation(relative_rot, seq_root_v) # bs X T X 3
-            gt_seq_res = seq_rot_pos.transpose(0, 1).contiguous().view(timesteps, bs, 24, 3) # T X bs X 24 X 3
+            gt_seq_res = seq_rot_pos.transpose(0, 1).contiguous().view(timesteps, bs, 22, 3) # T X bs X 24 X 3
 
             encoder_input = seq_rot_6d.view(bs, timesteps, self.n_joints, -1) # bs X T X 24 X 6
 
             input = encoder_input.view(bs, timesteps, -1) # bs X T X (24*9)
             input = input.transpose(1, 2) # bs X (24*9) X T
+            if interpolation:
+                input[:,:,10:-1] = 0.
             latent, z_vec_list = self.enc(input, offset) # input: bs X (n_edges*input_dim) X T
             # latent: bs X (k_edges*d) X (T//2^n_layers)
             # list, each is bs X k_edges X (2*latent_d)
-        
+            #   torch.Size([8, 12, 22])
+            #   torch.Size([8, 7, 44])
+            #   torch.Size([8, 7, 44])
+            #   torch.Size([8, 7, 44])
+
             mean_z_list = []
             sampled_z_list = []
             for z_idx in range(len(z_vec_list)):
@@ -615,7 +704,7 @@ class TwoHierSAVAEModel(nn.Module):
                     adjust_root_rot_flag=True, relative_root_rot=relative_rot)
             else:
                 mean_out_cont6d, mean_out_rotation_matrix, mean_out_pose_pos, \
-                mean_out_root_v, _, _, _ = self._decode(mean_z_list)
+                mean_out_root_v, _, _, _ = self._decode(mean_z_list, seq_rot_pos_ori)
 
             # bs X T X 24 X 6, bs X T X 24 X 3 X 3, bs X T X 24 X 3
             use_mean_seq_res = mean_out_pose_pos.transpose(0, 1) # T X bs X 24 X 3
@@ -627,10 +716,10 @@ class TwoHierSAVAEModel(nn.Module):
                      adjust_root_rot_flag=True)
             else:
                 sampled_out_cont6d, sampled_out_rotation_matrix, sampled_out_pose_pos, \
-                sampled_out_root_v, _, _, _ = self._decode(sampled_z_list)
+                sampled_out_root_v, _, _, _ = self._decode(sampled_z_list, seq_rot_pos_ori)
             # bs X T X 24 X 6, bs X T X 24 X 3 X 3, bs X T X 24 X 3
             use_sampled_seq_res = sampled_out_pose_pos.transpose(0, 1) # T X bs X 24 X 3
-           
+
         self.train()
         self.enc.train()
         self.dec.train()
@@ -638,8 +727,8 @@ class TwoHierSAVAEModel(nn.Module):
         return gt_seq_res, use_mean_seq_res, use_sampled_seq_res, None
         # T X bs X 24 X 3, T X bs X 24 X 3, T X bs X 24 X 3
 
-    def gen_seq(self, data, hp, iterations):
-        return self.test(data, hp, iterations, hp['max_input_timesteps'])
+    def gen_seq(self, data, hp, iterations, interpolation=False):
+        return self.test(data, hp, iterations, hp['max_input_timesteps'], interpolation=interpolation)
 
     def aa2matrot(self, pose):
         '''

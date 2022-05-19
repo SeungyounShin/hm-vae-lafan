@@ -94,13 +94,13 @@ class SkeletonConv(nn.Module):
 
     def forward(self, input):
         weight_masked = self.weight * self.mask
-        # print("weight masked:{0}".format(weight_masked.size()))
+        #print("weight masked:{0}".format(weight_masked.size()))
         # print("input:{0}".format(input.size()))
-        # print("input to skeleton conv :{0}".format(input.size()))
+        #print("input to skeleton conv :{0}".format(input.size()))
         res = F.conv1d(F.pad(input, self._padding_repeated_twice, mode=self.padding_mode),
                        weight_masked, self.bias, self.stride,
                        0, self.dilation, self.groups)
-        # print("res:{0}".format(res.size()))
+        #print("res:{0}".format(res.size()))
 
         return res
 
@@ -428,10 +428,43 @@ def find_neighbor_restricted(level):
     # a list with n_edges elements, each element is a list which contains edge idx of edges 
 
 if __name__ == "__main__":
-    # parent_json = "./utils/data/joint24_parents.json"
-    parent_json = "./utils/data/lafan_joint22_parents.json"
+    parent_json = "./utils/data/joint24_parents.json"
+    #parent_json = "./utils/data/lafan_joint22_parents.json"
+    lafan_joint_names = [
+        "Hips",
+        "LeftUpLeg",
+        "LeftLeg",
+        "LeftFoot",
+        "LeftToe",
+        "RightUpLeg",
+        "RightLeg",
+        "RightFoot",
+        "RightToe",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "LeftShoulder",
+        "LeftArm",
+        "LeftForeArm",
+        "LeftHand",
+        "RightShoulder",
+        "RightArm",
+        "RightForeArm",
+        "RightHand",
+    ]
+
     edges = get_edges(parent_json)
     print("edges:{0}".format(edges))
+
+    count = 0
+    for p,c in edges:
+        try:
+            print(lafan_joint_names[p],"->",lafan_joint_names[c])
+            count+=1
+        except:
+            print(p,c)
 
     print("First layer:")
     find_neighbor(edges, 2)

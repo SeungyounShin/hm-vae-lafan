@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import json 
 import my_tools
+
 class ForwardKinematicsLayer(torch.nn.Module):
     """ Forward Kinematics Layer Class """
     def __init__(self, device=torch.device("cuda"), parents=None, positions=None):
@@ -15,8 +16,11 @@ class ForwardKinematicsLayer(torch.nn.Module):
         self.b_idxs = None
 
         if parents is None and positions is None:
-            parents_json = "/orion/u/jiamanli/github/hm-vae/utils/data/joint24_parents.json"
-            pos_npy = "/orion/u/jiamanli/github/hm-vae/utils/data/skeleton_offsets.npy"
+            #parents_json = "/home/hm-vae/utils/data/joint24_parents.json"
+            #pos_npy = "/home/hm-vae/utils/data/skeleton_offsets.npy"
+
+            parents_json = "/home/hm-vae/utils/data/lafan_joint22_parents.json"
+            pos_npy = "/home/hm-vae/utils/data/lafan_offsets.npy"
            
             ori_parents_list = json.load(open(parents_json, 'r'))
             self.parents = []
@@ -51,7 +55,7 @@ class ForwardKinematicsLayer(torch.nn.Module):
             rot_matrices = rotations # bs X n_joints X 3 X 3
         elif rotations.size()[-1] == 6:
             rot_matrices = my_tools.rotation_matrix_from_ortho6d(rotations) # bs X n_joints X 3 X 3
-       
+        
         rot_matrices = torch.cat([rot_matrices, positions[..., None]], dim=-1) # bs X n_joints X 3 X 4
         zeros = torch.zeros(rot_matrices.shape[:-2] + torch.Size([1, 3])).to(self.device) # bs X n_joints X 1 X 3   
         ones = torch.ones(rot_matrices.shape[:-2] + torch.Size([1, 1])).to(self.device) # bs X n_joints X 1 X 1

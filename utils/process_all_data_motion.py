@@ -26,21 +26,22 @@ joints_to_use = np.arange(0, 156).reshape((-1, 3))[joints_to_use].reshape(-1)
 
 all_sequences = [
     'ACCAD',
-    'BioMotionLab_NTroje',
+    #'BioMotionLab_NTroje',
     'CMU',
     'EKUT',
-    'Eyes_Japan_Dataset',
+    'EyesJapanDataset',
     'HumanEva',
     'KIT',
-    'MPI_HDM05',
-    'MPI_Limits',
-    'MPI_mosh',
+    'MPIHDM05',
+    'MPILimits',
+    'MPImosh',
     'SFU',
-    'SSM_synced',
-    'TCD_handMocap',
+    'SSMsynced',
+    'TCDhandMocap',
     'TotalCapture',
-    'Transitions_mocap',
+    'Transitionsmocap',
 ]
+
 
 # walking_id = ["07", "08", "35", "36", "37", "38", "45", "46", "47", "78", "91"] # subject id 
 # indian_id = ["94"] # subject id
@@ -94,7 +95,7 @@ def read_single_sequence(folder, seq_name, fk_layer, dest_folder, fps=None):
             
             if fname.endswith('shape.npz'):
                 continue
-                
+        
             data = np.load(fname)
                 
             ori_pose = data['poses'][:, joints_to_use] # N X 72
@@ -125,7 +126,7 @@ def read_single_sequence(folder, seq_name, fk_layer, dest_folder, fps=None):
             rot_list = torch.zeros(timesteps, 24, 3, 3)
             rot6d_list = torch.zeros(timesteps, 24, 6)
             coord_list = torch.zeros(timesteps, 24, 3)
-
+            
             pose = torch.from_numpy(pose).float() # N X 72
             translation = torch.from_numpy(translation).float() # N X 3
             for t_idx in range(0, timesteps, batch_size):
@@ -169,9 +170,9 @@ def read_single_sequence(folder, seq_name, fk_layer, dest_folder, fps=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', type=str, help='dataset directory', default='/orion/u/jiamanli/datasets/amass')
+    parser.add_argument('--dir', type=str, help='dataset directory', default='/home/dataset/amass')
     # parser.add_argument('--dest-folder', type=str, help='processed data directory', default='/orion/u/jiamanli/datasets/amass_for_hm_vae')
-    parser.add_argument('--dest-folder', type=str, help='processed data directory', default='/orion/u/jiamanli/datasets/amass_for_hm_vae_fps30')
+    parser.add_argument('--dest-folder', type=str, help='processed data directory', default='/home/dataset/amass/amass_for_hm_vae_fps30')
     args = parser.parse_args()
 
     # read_data(args.dir, all_sequences, args.dest_folder)

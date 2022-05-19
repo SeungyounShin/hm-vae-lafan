@@ -85,6 +85,15 @@ class MotionSeqData(data.Dataset):
     def __init__(self, rot_npy_folder, jsonfile, mean_std_path, cfg, test_flag=False, fps_aug_flag=False, random_root_rot_flag=False):
 
         self.ids_dic = json.load(open(jsonfile, 'r'))
+        new_dic = dict()
+        cnt =0
+        for idx,i in enumerate(self.ids_dic):
+            if 'BioMotionLab' in self.ids_dic[i]:
+                continue 
+            else:
+                new_dic[str(cnt)] = self.ids_dic[i]
+                cnt+=1
+        self.ids_dic = new_dic
 
         id_list = []
         for k in self.ids_dic.keys():
@@ -96,30 +105,14 @@ class MotionSeqData(data.Dataset):
 
         self.train_seq_len = cfg['train_seq_len']
 
-        self.mean_std_data = np.load(mean_std_path) # 2 X n_dim
-        self.mean_std_data[1, self.mean_std_data[1, :]==0] = 1.0
+        #self.mean_std_data = np.load(mean_std_path) # 2 X n_dim
+        #self.mean_std_data[1, self.mean_std_data[1, :]==0] = 1.0
 
         self.hp = cfg 
         self.test_flag = test_flag
 
         self.fps_aug_flag = fps_aug_flag
         self.random_root_rot_flag = random_root_rot_flag
-
-    def standardize_data(self, ori_data):
-        # ori_data: T X n_dim
-        mean_val = self.mean_std_data[0, :][np.newaxis, :] # 1 X n_dim
-        std_val = self.mean_std_data[1, :][np.newaxis, :] # 1 X n_dim
-        dest_data = (ori_data - mean_val)/std_val # T X n_dim
-
-        return dest_data
-
-    def standardize_data_specify_dim(self, ori_data, start_idx, end_idx):
-        # ori_data: T X n_dim
-        mean_val = self.mean_std_data[0, :][np.newaxis, start_idx:end_idx] # 1 X n_dim
-        std_val = self.mean_std_data[1, :][np.newaxis, start_idx:end_idx] # 1 X n_dim
-        dest_data = (ori_data - mean_val)/std_val # T X n_dim
-
-        return dest_data
 
     def __getitem__(self, index):
         # index = 0 # For debug
@@ -132,7 +125,7 @@ class MotionSeqData(data.Dataset):
 
         timesteps = ori_pose_seq_data.shape[0]
         n_dim = ori_pose_seq_data.shape[1]
-       
+
         if self.train_seq_len <= timesteps:
             random_t_idx = random.sample(list(range(timesteps-self.train_seq_len+1)), 1)[0]
             # random_t_idx = 0 # For debug
@@ -140,22 +133,19 @@ class MotionSeqData(data.Dataset):
         else:
             return self.__getitem__(random.sample(list(range(0, self.__len__())), 1)[0])
            
-        pose_seq_data = self.standardize_data(ori_pose_seq_data)
-
         # theta = torch.cat((rot6d_list.view(timesteps, -1), rot_list.view(timesteps, -1), coord_list.view(timesteps, -1), \
         #         linear_v.view(timesteps, -1), linear_v_list.view(timesteps, -1), root_v), dim=1) # T X n_dim
         # n_dim = 24*6(rot6d) + 24*3*3(rot matrix) + 24*3(joint coord) + 24*3(linear v) + 24*3(linear v instead, not used, angular v) + 3
         # = 144 + 216 + 72 + 72 + 72 + 3 = 579
         ori_seq_pose_data = torch.from_numpy(ori_pose_seq_data[random_t_idx:end_t_idx+1, :]).float() # T X n_dim
-        seq_pose_data = torch.from_numpy(pose_seq_data[random_t_idx:end_t_idx+1, :]).float() # T X n_dim
 
-        seq_rot_6d = ori_seq_pose_data[:, :24*6] # T X (24*6)
-        seq_rot_mat = ori_seq_pose_data[:, 24*6:24*6+24*3*3] # T X (24*3*3), used for loss, no need for normalization
-        seq_rot_pos = ori_seq_pose_data[:, 24*6+24*3*3:24*6+24*3*3+24*3] # T X (24*3), used for loss, no need for normalization
-        seq_joint_pos = seq_pose_data[:, 24*6+24*3*3:24*6+24*3*3+24*3] # T X (24*3)
-        seq_linear_v = seq_pose_data[:, 24*6+24*3*3+24*3:24*6+24*3*3+24*3+24*3] # T X (24*3) 
-        seq_angular_v = seq_pose_data[:, 24*6+24*3*3+24*3+24*3:24*6+24*3*3+24*3+24*3+24*3] # T X (24*3)
-        seq_root_v = seq_pose_data[:, 576:579] # T X 3 
+        seq_rot_6d = ori_seq_pose_data[:, :22*6] # T X (24*6)
+        seq_rot_mat = ori_seq_pose_data[:, 22*6:22*6+22*3*3] # T X (24*3*3), used for loss, no need for normalization
+        seq_rot_pos = ori_seq_pose_data[:, 22*6+22*3*3:22*6+22*3*3+22*3] # T X (24*3), used for loss, no need for normalization
+        seq_joint_pos = ori_seq_pose_data[:, 22*6+22*3*3:22*6+22*3*3+22*3] # T X (24*3)
+        seq_linear_v = ori_seq_pose_data[:, 22*6+22*3*3+22*3:22*6+22*3*3+22*3+22*3] # T X (24*3) 
+        seq_angular_v = ori_seq_pose_data[:, 22*6+22*3*3+22*3+22*3:22*6+22*3*3+22*3+22*3+22*3] # T X (24*3)
+        seq_root_v = ori_seq_pose_data[:, -3:] # T X 3 
 
         # Random rotate global orientation to make the model adapt to different global rotation 
         if self.random_root_rot_flag:
@@ -168,21 +158,21 @@ class MotionSeqData(data.Dataset):
             aug_root_rot = torch.matmul(random_root_rot, ori_root_rot) # T X 3 X 3
 
             # Process root_v
-            aug_root_v = torch.matmul(random_root_rot, ori_seq_pose_data[:, 576:579][:, :, None]) # T X 3 X 1
+            aug_root_v = torch.matmul(random_root_rot, ori_seq_pose_data[:, -3:][:, :, None]) # T X 3 X 1
             # aug_root_v = torch.matmul(noisy_random_root_rot, aug_root_v) 
             seq_root_v = aug_root_v.squeeze(-1) # T X 3 
             # Do normalization
-            seq_root_v = self.standardize_data_specify_dim(seq_root_v, 576, 579)
+            seq_root_v = self.standardize_data_specify_dim(seq_root_v, 528, 531)
 
             aug_root_rot = aug_root_rot.view(-1, 3*3) # T X 9
             seq_rot_mat[:, :3*3] = aug_root_rot
 
-            rotMatrices = seq_rot_mat.view(-1, 24, 3, 3) # T X 24 X 3 X 3
+            rotMatrices = seq_rot_mat.view(-1, 22, 3, 3) # T X 24 X 3 X 3
             # Convert rotation matrix to 6D representation
             cont6DRep = torch.stack((rotMatrices[:, :, :, 0], rotMatrices[:, :, :, 1]), dim=-2) # T X 24 X 2 X 3
             cont6DRep = cont6DRep.view(rotMatrices.size()[0], rotMatrices.size()[1], 6) # T X 24 X 6
 
-            seq_rot_6d = cont6DRep.view(-1, 24*6)
+            seq_rot_6d = cont6DRep.view(-1, 22*6)
         
         return seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v
         # When data_aug is True, only use seq_rot_6d, seq_rot_mat  
@@ -190,32 +180,132 @@ class MotionSeqData(data.Dataset):
     def __len__(self):
         return len(self.ids)
 
+
+class MotionSeqDataWithWindow(data.Dataset):
+
+    def __init__(self, 
+        rot_npy_folder, jsonfile, mean_std_path, cfg, test_flag=False, fps_aug_flag=False, random_root_rot_flag=False,
+        window_size = 64, window_stride = 50):
+
+        self.ids_dic = json.load(open(jsonfile, 'r'))
+        self.window_size = window_size
+        new_dic = dict()
+        cnt =0
+        for idx,i in enumerate(self.ids_dic):
+            if 'BioMotionLab' in self.ids_dic[i]:
+                continue 
+            else:
+                new_dic[str(cnt)] = self.ids_dic[i]
+                cnt+=1
+        self.ids_dic = new_dic
+
+        self.ori_pose_seq_datas = list()
+        self.pose_ind = list()
+        self.file_ind = list()
+        self.substitute = list()
+        sub = 0
+        for i in self.ids_dic:
+            ori_pose_seq_data = np.load(os.path.join(rot_npy_folder, self.ids_dic[i])) # T X n_dim
+            self.ori_pose_seq_datas.append(ori_pose_seq_data)
+            self.pose_ind.append(np.arange(0,ori_pose_seq_data.shape[0]-window_size,window_stride)) 
+            self.file_ind += [int(i) for j in range(self.pose_ind[-1].shape[0])]
+            self.substitute.append(sub)
+            sub += self.pose_ind[-1].shape[0]
+
+        id_list = []
+        for k in self.ids_dic.keys():
+            id_list.append(int(k))
+           
+        self.ids = id_list
+
+        self.rot_npy_folder = rot_npy_folder
+
+        self.train_seq_len = cfg['train_seq_len']
+
+        #self.mean_std_data = np.load(mean_std_path) # 2 X n_dim
+        #self.mean_std_data[1, self.mean_std_data[1, :]==0] = 1.0
+
+        self.hp = cfg 
+        self.test_flag = test_flag
+
+        self.fps_aug_flag = fps_aug_flag
+        self.random_root_rot_flag = random_root_rot_flag
+
+    def __getitem__(self, index):
+        # index = 0 # For debug
+        fileInd = self.file_ind[index]
+        poseStart = self.pose_ind[fileInd][index - self.substitute[fileInd]]
+        full_pose = self.ori_pose_seq_datas[fileInd]
+        ori_seq_pose_data = full_pose[poseStart:poseStart+self.window_size,:]
+
+        timesteps = ori_seq_pose_data.shape[0]
+        n_dim = ori_seq_pose_data.shape[1]
+
+        seq_rot_6d = ori_seq_pose_data[:, :22*6] # T X (24*6)
+        seq_rot_mat = ori_seq_pose_data[:, 22*6:22*6+22*3*3] # T X (24*3*3), used for loss, no need for normalization
+        seq_rot_pos = ori_seq_pose_data[:, 22*6+22*3*3:22*6+22*3*3+22*3] # T X (24*3), used for loss, no need for normalization
+        seq_joint_pos = ori_seq_pose_data[:, 22*6+22*3*3:22*6+22*3*3+22*3] # T X (24*3)
+        seq_linear_v = ori_seq_pose_data[:, 22*6+22*3*3+22*3:22*6+22*3*3+22*3+22*3] # T X (24*3) 
+        seq_angular_v = ori_seq_pose_data[:, 22*6+22*3*3+22*3+22*3:22*6+22*3*3+22*3+22*3+22*3] # T X (24*3)
+        seq_root_v = ori_seq_pose_data[:, -3:] # T X 3 
+
+        # Random rotate global orientation to make the model adapt to different global rotation 
+        if self.random_root_rot_flag:
+            random_root_rot = rand_rotation_matrix() # 3 X 3
+
+            random_root_rot = torch.from_numpy(random_root_rot).float()[None, :, :] # 1 X 3 X 3
+            random_root_rot = random_root_rot.repeat(self.train_seq_len, 1, 1) # T X 3 X 3
+            ori_root_rot = seq_rot_mat[:, :3*3] # T X (3*3)
+            ori_root_rot = ori_root_rot.contiguous().view(-1, 3, 3) 
+            aug_root_rot = torch.matmul(random_root_rot, ori_root_rot) # T X 3 X 3
+
+            # Process root_v
+            aug_root_v = torch.matmul(random_root_rot, ori_seq_pose_data[:, -3:][:, :, None]) # T X 3 X 1
+            # aug_root_v = torch.matmul(noisy_random_root_rot, aug_root_v) 
+            seq_root_v = aug_root_v.squeeze(-1) # T X 3 
+            # Do normalization
+            seq_root_v = self.standardize_data_specify_dim(seq_root_v, 528, 531)
+
+            aug_root_rot = aug_root_rot.view(-1, 3*3) # T X 9
+            seq_rot_mat[:, :3*3] = aug_root_rot
+
+            rotMatrices = seq_rot_mat.view(-1, 22, 3, 3) # T X 24 X 3 X 3
+            # Convert rotation matrix to 6D representation
+            cont6DRep = torch.stack((rotMatrices[:, :, :, 0], rotMatrices[:, :, :, 1]), dim=-2) # T X 24 X 2 X 3
+            cont6DRep = cont6DRep.view(rotMatrices.size()[0], rotMatrices.size()[1], 6) # T X 24 X 6
+
+            seq_rot_6d = cont6DRep.view(-1, 22*6)
+        
+        return seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v
+        # When data_aug is True, only use seq_rot_6d, seq_rot_mat  
+
+    def __len__(self):
+        return len(self.file_ind)
+
 def get_train_loaders_all_data_seq(cfg):
-    root_folder = "/orion/u/jiamanli/github/hm-vae/utils/data"
-  
+    root_folder = "/home/hm-vae-lafan/utils/data"
     data_folder = os.path.join(root_folder, "for_all_data_motion_model")
 
     if cfg['use_30fps_data']:
-        rot_npy_folder = os.path.join(root_folder, "/orion/u/jiamanli/datasets/amass_for_hm_vae_fps30")
+        rot_npy_folder = os.path.join(root_folder, "/home/dataset/lafan_for_hm_vae_fps30")
     else:
-        rot_npy_folder = "/orion/u/jiamanli/datasets/amass_for_hm_vae"
+        rot_npy_folder = "/orion/u/jiamanli/datasets/lafan_for_hm_vae_fps30"
     
     mean_std_path = os.path.join(data_folder, "all_amass_data_mean_std.npy")
 
-    train_json_file = os.path.join(data_folder, "train_all_amass_motion_data.json")
-    val_json_file = os.path.join(data_folder, "val_all_amass_motion_data.json")
-  
+    train_json_file = os.path.join(data_folder, "train_all_lafan_motion_data.json")
+    val_json_file = os.path.join(data_folder, "val_all_lafan_motion_data.json")
+    
     batch_size = cfg['batch_size'] 
 
-    workers = 1
+    workers = 8
     fps_aug_flag = cfg['fps_aug_flag']
     random_root_rot_flag = cfg['random_root_rot_flag']
 
     train_dataset = MotionSeqData(rot_npy_folder, train_json_file, mean_std_path, cfg, \
         fps_aug_flag=fps_aug_flag, random_root_rot_flag=random_root_rot_flag)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=workers, pin_memory=True, drop_last=True)
+        train_dataset, batch_size=batch_size, num_workers=workers, pin_memory=True)
 
     val_dataset = MotionSeqData(rot_npy_folder, val_json_file, mean_std_path, cfg, \
         fps_aug_flag=fps_aug_flag, random_root_rot_flag=random_root_rot_flag)
@@ -344,3 +434,23 @@ def get_train_loaders_all_data_seq_for_eval(cfg):
         num_workers=workers, pin_memory=True, drop_last=True)
 
     return test_loader
+
+if __name__=="__main__":
+    
+    rot_npy_folder = "/home/dataset/lafan_for_hm_vae_fps30"
+    val_json_file = "/home/hm-vae-lafan/utils/data/for_all_data_motion_model/val_all_lafan_motion_data.json"
+    mean_std_path = "/home/hm-vae-lafan/utils/data/for_all_data_motion_model/all_amass_data_mean_std.npy"
+    from utils_common import get_config
+    config = get_config('/home/hm-vae-lafan/configs/len64_no_aug_hm_vae.yaml')
+
+    test_dataset = MotionSeqDataWithWindow(rot_npy_folder, val_json_file, mean_std_path, config, \
+        fps_aug_flag=config['fps_aug_flag'], random_root_rot_flag=config['random_root_rot_flag'])
+    
+    print(len(test_dataset))
+
+    seq_rot_6d, seq_rot_mat, seq_rot_pos, seq_joint_pos, seq_linear_v, seq_angular_v, seq_root_v = \
+        test_dataset[200]
+    
+    print("Seq rot 6d    : ",seq_rot_6d.shape)
+    print("seq_rot_mat   : ",seq_rot_mat.shape)
+    print("seq_joint_pos : ",seq_joint_pos.shape)

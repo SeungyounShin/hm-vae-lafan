@@ -4,6 +4,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.nn.init as init
 from torch.optim import lr_scheduler
 
@@ -35,7 +36,8 @@ class Trainer(nn.Module):
         self.apply(weights_init(cfg['init']))
 
     def gen_update(self, data, hp, iterations, multigpus, validation_flag=False):
-        if validation_flag:
+
+         if validation_flag:
             if self.cfg['model_name'] == "TwoHierSAVAEModel":
                 al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v, kl_list = \
                     self.model(data, hp, iterations, multigpus=multigpus, validation_flag=True)
@@ -63,7 +65,7 @@ class Trainer(nn.Module):
             self.loss_val_rec_6d.item(), self.loss_val_rec_rot.item(), self.loss_val_rec_pose.item(), \
             self.loss_val_rec_joint_pos.item(), self.loss_val_rec_root_v.item(), \
             self.loss_val_rec_linear_v.item(), self.loss_val_rec_angular_v.item()
-        else:
+         else:
             self.gen_opt.zero_grad()
             
             if self.cfg['model_name'] == "TwoHierSAVAEModel":
@@ -96,6 +98,142 @@ class Trainer(nn.Module):
             self.loss_rec_6d.item(), self.loss_rec_rot.item(), self.loss_rec_pose.item(), \
             self.loss_rec_joint_pos.item(), self.loss_rec_root_v.item(), \
             self.loss_rec_linear_v.item(), self.loss_rec_angular_v.item()
+
+    def interpolation_encoder_update(self, input_data, hp, iterations, multigpus, validation_flag=False):
+
+        if validation_flag:
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v, kl_list = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, validation_flag=True, interpolatio=True)
+            else:
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, validation_flag=True, interpolatio=True)
+
+            self.loss_val_total = torch.mean(al)
+            self.loss_val_kl = torch.mean(kl)
+            self.loss_val_rec_6d = torch.mean(rec_6d)
+            self.loss_val_rec_rot = torch.mean(rec_rot)
+            self.loss_val_rec_pose = torch.mean(rec_pose)
+            self.loss_val_rec_joint_pos = torch.mean(rec_joint_pos)
+            self.loss_val_rec_root_v = torch.mean(rec_root_v)
+            self.loss_val_rec_linear_v = torch.mean(rec_linear_v)
+            self.loss_val_rec_angular_v = torch.mean(rec_angular_v)
+
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                self.loss_hier_kl_1 = torch.mean(kl_list[0])
+                self.loss_hier_kl_2 = torch.mean(kl_list[1])
+                self.loss_hier_kl_3 = torch.mean(kl_list[2])
+                self.loss_hier_kl_4 = torch.mean(kl_list[3])
+
+            return self.loss_val_total.item(), self.loss_val_kl.item(),  \
+            self.loss_val_rec_6d.item(), self.loss_val_rec_rot.item(), self.loss_val_rec_pose.item(), \
+            self.loss_val_rec_joint_pos.item(), self.loss_val_rec_root_v.item(), \
+            self.loss_val_rec_linear_v.item(), self.loss_val_rec_angular_v.item()
+        else:
+            
+            self.gen_opt.zero_grad()
+            
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v, kl_list = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, interpolation=True)
+            else:
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, interpolation=True)
+
+            self.loss_total = torch.mean(al)
+            self.loss_kl = torch.mean(kl)
+            self.loss_rec_6d = torch.mean(rec_6d)
+            self.loss_rec_rot = torch.mean(rec_rot)
+            self.loss_rec_pose = torch.mean(rec_pose)
+            self.loss_rec_joint_pos = torch.mean(rec_joint_pos)
+            self.loss_rec_root_v = torch.mean(rec_root_v)
+            self.loss_rec_linear_v = torch.mean(rec_linear_v)
+            self.loss_rec_angular_v = torch.mean(rec_angular_v)
+
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                self.loss_hier_kl_1 = torch.mean(kl_list[0])
+                self.loss_hier_kl_2 = torch.mean(kl_list[1])
+                self.loss_hier_kl_3 = torch.mean(kl_list[2])
+                self.loss_hier_kl_4 = torch.mean(kl_list[3])
+
+            self.gen_opt.step()
+            self.gen_scheduler.step()
+
+            return self.loss_total.item(), self.loss_kl.item(), \
+            self.loss_rec_6d.item(), self.loss_rec_rot.item(), self.loss_rec_pose.item(), \
+            self.loss_rec_joint_pos.item(), self.loss_rec_root_v.item(), \
+            self.loss_rec_linear_v.item(), self.loss_rec_angular_v.item()
+    
+    def interpolation_decoder_update(self, input_data, decoder_w ,hp, iterations, multigpus, validation_flag=False):
+
+        if validation_flag:
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v, kl_list = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, validation_flag=True, interpolation=True)
+            else:
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, validation_flag=True, interpolation=True)
+
+            self.loss_val_total = torch.mean(al)
+            self.loss_val_kl = torch.mean(kl)
+            self.loss_val_rec_6d = torch.mean(rec_6d)
+            self.loss_val_rec_rot = torch.mean(rec_rot)
+            self.loss_val_rec_pose = torch.mean(rec_pose)
+            self.loss_val_rec_joint_pos = torch.mean(rec_joint_pos)
+            self.loss_val_rec_root_v = torch.mean(rec_root_v)
+            self.loss_val_rec_linear_v = torch.mean(rec_linear_v)
+            self.loss_val_rec_angular_v = torch.mean(rec_angular_v)
+
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                self.loss_hier_kl_1 = torch.mean(kl_list[0])
+                self.loss_hier_kl_2 = torch.mean(kl_list[1])
+                self.loss_hier_kl_3 = torch.mean(kl_list[2])
+                self.loss_hier_kl_4 = torch.mean(kl_list[3])
+
+            return self.loss_val_total.item(), self.loss_val_kl.item(),  \
+            self.loss_val_rec_6d.item(), self.loss_val_rec_rot.item(), self.loss_val_rec_pose.item(), \
+            self.loss_val_rec_joint_pos.item(), self.loss_val_rec_root_v.item(), \
+            self.loss_val_rec_linear_v.item(), self.loss_val_rec_angular_v.item()
+        else:
+            
+            self.gen_opt.zero_grad()
+            
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v, kl_list = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, interpolation=True)
+            else:
+                al, kl, rec_6d, rec_rot, rec_pose, rec_joint_pos, rec_root_v, rec_linear_v, rec_angular_v = \
+                    self.model(input_data, hp, iterations, multigpus=multigpus, interpolation=True)
+
+            self.loss_total = torch.mean(al) 
+            self.loss_kl = torch.mean(kl)
+            self.loss_rec_6d = torch.mean(rec_6d)
+            self.loss_rec_rot = torch.mean(rec_rot)
+            self.loss_rec_pose = torch.mean(rec_pose)
+            self.loss_rec_joint_pos = torch.mean(rec_joint_pos)
+            self.loss_rec_root_v = torch.mean(rec_root_v)
+            self.loss_rec_linear_v = torch.mean(rec_linear_v)
+            self.loss_rec_angular_v = torch.mean(rec_angular_v)
+
+            decoder_deviate_loss = 0.
+            for i,j in zip(self.model.dec.parameters(), decoder_w):
+                decoder_deviate_loss += F.l1_loss(i,j)
+            self.loss_total += decoder_deviate_loss
+
+            if self.cfg['model_name'] == "TwoHierSAVAEModel":
+                self.loss_hier_kl_1 = torch.mean(kl_list[0])
+                self.loss_hier_kl_2 = torch.mean(kl_list[1])
+                self.loss_hier_kl_3 = torch.mean(kl_list[2])
+                self.loss_hier_kl_4 = torch.mean(kl_list[3])
+
+            self.gen_opt.step()
+            self.gen_scheduler.step()
+
+            return self.loss_total.item(), self.loss_kl.item(), \
+            self.loss_rec_6d.item(), self.loss_rec_rot.item(), self.loss_rec_pose.item(), \
+            self.loss_rec_joint_pos.item(), self.loss_rec_root_v.item(), \
+            self.loss_rec_linear_v.item(), self.loss_rec_angular_v.item()
+    
 
     def resume(self, checkpoint_dir, hp, multigpus):
         this_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
@@ -138,8 +276,8 @@ class Trainer(nn.Module):
         this_model = self.model.module if multigpus else self.model
         return this_model.test(data, hp, iterations)
 
-    def gen_seq(self, data, hp, iterations):
-        return self.model.gen_seq(data, hp, iterations)
+    def gen_seq(self, data, hp, iterations, interpolation=False):
+        return self.model.gen_seq(data, hp, iterations, interpolation=interpolation)
 
     def forward(self, *inputs):
         print('Forward function not implemented.')

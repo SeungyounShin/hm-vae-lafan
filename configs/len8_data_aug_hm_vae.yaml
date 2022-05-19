@@ -32,7 +32,7 @@ model_name: TwoHierSAVAEModel
 batch_size: 8
 latent_d: 6
 shallow_latent_d: 6
-n_joints: 24
+n_joints: 22
 input_dim: 6
 output_dim: 6      
 

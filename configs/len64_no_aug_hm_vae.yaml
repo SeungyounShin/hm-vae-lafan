@@ -1,5 +1,5 @@
 # logger options
-image_save_iter: 20000       # How often do you want to save output images during training
+image_save_iter: 1000       # How often do you want to save output images during training
 image_display_iter: 20000       # How often do you want to display output images during training
 snapshot_save_iter: 20000      # How often do you want to save trained models
 log_iter: 20                   # How often do you want to log the training stats
@@ -30,9 +30,9 @@ gamma: 0.3
 # model options
 model_name: TwoHierSAVAEModel
 batch_size: 8
-latent_d: 24
-shallow_latent_d: 12
-n_joints: 24
+latent_d: 22
+shallow_latent_d: 11
+n_joints: 22
 input_dim: 6
 output_dim: 6      
 

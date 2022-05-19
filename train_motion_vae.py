@@ -5,6 +5,11 @@ import argparse
 import shutil
 import numpy as np 
 
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import axes3d
+from matplotlib.animation import FuncAnimation
+import matplotlib as mpl
+
 from torch.utils.tensorboard import SummaryWriter
 
 from utils_motion_vae import get_train_loaders_all_data_seq
@@ -20,7 +25,7 @@ cudnn.benchmark = True
 parser = argparse.ArgumentParser()
 parser.add_argument('--config',
                     type=str,
-                    default='',
+                    default='/home/hm-vae-lafan/configs/len51_no_aug_hm_vae.yaml',
                     help='configuration file for training and testing')
 parser.add_argument('--output_path',
                     type=str,
@@ -41,6 +46,7 @@ opts = parser.parse_args()
 
 # Load experiment setting
 config = get_config(opts.config)
+
 max_iter = config['max_iter']
 
 trainer = Trainer(config)
@@ -52,6 +58,7 @@ if opts.multigpus:
     print("Number of GPUs: %d" % ngpus)
     trainer.model = torch.nn.DataParallel(trainer.model, device_ids=range(ngpus))
 else:
+    print("Using a single GPU")
     config['gpus'] = 1
 
 data_loaders = get_train_loaders_all_data_seq(config)
@@ -69,6 +76,7 @@ shutil.copyfile(opts.config, os.path.join(output_directory, 'config.yaml'))
 train_writer = SummaryWriter(
     os.path.join(output_directory, "logs"))
 
+
 iterations = trainer.resume(checkpoint_directory,
                             hp=config,
                             multigpus=opts.multigpus) if opts.resume else 0
@@ -83,13 +91,15 @@ while True:
     val_dataset = val_loader
     test_dataset = test_loader
     for it, input_data in enumerate(train_dataset):
+        
         loss_all, loss_kl, loss_6d_rec, loss_rot_rec, loss_pose_rec, \
         loss_joint_pos_rec, loss_root_v_rec, loss_linear_v_rec, loss_angular_v_rec = \
         trainer.gen_update(input_data, config, iterations, opts.multigpus)
+
         if it % 50 == 0:
-            print('Training: Total loss: %.4f, KL loss: %.8f, Rec 6D loss: %.4f, Rec Rot loss: %.4f, Rec Pose loss: %.4f, \
+            print('%d Training: Total loss: %.4f, KL loss: %.8f, Rec 6D loss: %.4f, Rec Rot loss: %.4f, Rec Pose loss: %.4f, \
                 Rec joint pos loss: %.4f, Rec root v loss: %.4f, Rec linear v loss: %.4f, Rec angular v loss: %.4f' % \
-                (loss_all, loss_kl, loss_6d_rec, loss_rot_rec, loss_pose_rec, loss_joint_pos_rec, \
+                (iterations, loss_all, loss_kl, loss_6d_rec, loss_rot_rec, loss_pose_rec, loss_joint_pos_rec, \
                 loss_root_v_rec, loss_linear_v_rec, loss_angular_v_rec))
         # torch.cuda.synchronize()
         
@@ -111,43 +121,62 @@ while True:
 
         # Visulization
         if (iterations + 1) % config['image_save_iter'] == 0:
+            print(f"Test len :: {len(test_dataset)}")
             with torch.no_grad():
                 for test_it, test_input_data in enumerate(test_dataset):
+                
                     if test_it >= opts.test_batch_size:
                         break;
-                    
+                    print(f"Test {test_it} saving results on {image_directory}")
                     # Generate long sequences
                     gt_seq, mean_seq_out_pos, sampled_seq_out_pos, \
                         zero_seq_out_pos \
                         = trainer.gen_seq(test_input_data, config, iterations)
                     # T X bs X 24 X 3, T X bs X 24 X 3, T X bs X 24 X 3, T X bs X 24 X 3
                     for bs_idx in range(0, 1): # test data loader set bs to 1
-                        gt_seq_for_vis = gt_seq[:, bs_idx, :, :][None, :, :, :] # 1 X T X 24 X 3
+                        gt_seq_for_vis = gt_seq[:, bs_idx, :, :].cpu() # T X 22 X 3
+                        mean_out_for_vis = mean_seq_out_pos[:, bs_idx, :, :].cpu() # T X 22 X 3
+                        sampled_out_for_vis = sampled_seq_out_pos[:, bs_idx, :, :].cpu() # T X 24 X 3
 
-                        mean_out_for_vis = mean_seq_out_pos[:, bs_idx, :, :] # T X 24 X 3
-                        mean_out_for_vis = mean_out_for_vis[None, :, :, :] # 1 X T X 24 X 3
+                        fig = plt.figure()
+                        ax = fig.add_subplot(projection='3d')
+                        pad = 200
 
-                        cat_gt_mean_rot_seq_for_vis = torch.cat((gt_seq_for_vis, mean_out_for_vis), dim=0)
+                        edges = [
+                            (0, 1), (0, 5), (0, 9),
+                            (1 ,2), (2, 3), (3, 4),
+                            (5 ,6), (6, 7), (7, 8),
+                            (9,10), (10,11),(11,12),
+                            (12, 13), (11, 14), (14, 15), (15, 16), (16, 17), (11, 18), (18, 19), (19, 20), (20, 21)
+                        ]
 
-                        sampled_out_for_vis = sampled_seq_out_pos[:, bs_idx, :, :] # T X 24 X 3
-                        sampled_out_for_vis = sampled_out_for_vis[None, :, :, :] # 1 X T X 24 X 3
-                        
-                        if config['model_name'] == "TrajectoryModel":
-                            show3Dpose_animation(cat_gt_mean_rot_seq_for_vis.data.cpu().numpy(), image_directory, \
-                                iterations, "mean_seq_rot_6d", test_it, use_amass=True)
-                            show3Dpose_animation(sampled_out_for_vis.data.cpu().numpy(), image_directory, \
-                                iterations, "sampled_seq_rot_6d", test_it, use_amass=True)
-                        else:
-                            if config['random_root_rot_flag']:
-                                show3Dpose_animation(cat_gt_mean_rot_seq_for_vis.data.cpu().numpy(), image_directory, \
-                                    iterations, "mean_seq_rot_6d", test_it, use_amass=False)
-                                show3Dpose_animation(sampled_out_for_vis.data.cpu().numpy(), image_directory, \
-                                    iterations, "sampled_seq_rot_6d", test_it, use_amass=False)
-                            else:
-                                show3Dpose_animation(cat_gt_mean_rot_seq_for_vis.data.cpu().numpy(), image_directory, \
-                                    iterations, "mean_seq_rot_6d", test_it, use_amass=True)
-                                show3Dpose_animation(sampled_out_for_vis.data.cpu().numpy(), image_directory, \
-                                    iterations, "sampled_seq_rot_6d", test_it, use_amass=True)
+                        root_mean = gt_seq_for_vis[:,:].mean(dim=[-3,-2])
+
+                        def update(frame):
+                            ax.cla()
+                            sample_pos  = mean_out_for_vis[int(frame),:,:]
+                            gt_pos      = gt_seq_for_vis[int(frame),:,:]
+                            for e in edges:
+                                ax.plot(
+                                    [sample_pos[:, 0][e[0]], sample_pos[:, 0][e[1]]],
+                                    [sample_pos[:, 2][e[0]], sample_pos[:, 2][e[1]]],
+                                    [sample_pos[:, 1][e[0]], sample_pos[:, 1][e[1]]], color='royalblue',
+                                    linewidth=2.0)
+                                
+                                ax.plot(
+                                    [gt_pos[:, 0][e[0]], gt_pos[:, 0][e[1]]],
+                                    [gt_pos[:, 2][e[0]], gt_pos[:, 2][e[1]]],
+                                    [gt_pos[:, 1][e[0]], gt_pos[:, 1][e[1]]], color='red',
+                                    linewidth=2.0)
+                                
+                                ax.set_xlim([root_mean[0]-pad,root_mean[0]+pad])
+                                ax.set_ylim([root_mean[2]-pad,root_mean[2]+pad]) 
+                                ax.set_zlim([-200,+200]) 
+
+                        animm = FuncAnimation(fig, update, frames=[i for i in range(0,gt_seq_for_vis.shape[0],1)])
+
+                        print(image_directory)
+                        animm.save('./test_results.gif', writer='imagemagick')
                             
         if (iterations + 1) % config['log_iter'] == 0:
             print("Iteration: %08d/%08d" % (iterations + 1, max_iter))
