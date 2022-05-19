@@ -22,4 +22,4 @@ python train_motion_vae.py --config ./configs/len64_no_aug_hm_vae.yaml
 Coming soon. 
 
 ## Motion Interpolation 
-Coming soon. 
+![Motion Interpolation ]([http://cfile6.uf.tistory.com/image/2426E646543C9B4532C7B0](https://github.com/SeungyounShin/hm-vae-lafan/blob/main/results/interpolation_result_54k.gif?raw=true))
